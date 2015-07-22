@@ -64,13 +64,68 @@ func getTypeString(jsonType, format string) string {
 	}
 }
 
-func generateTypeName(origName string) string {
-	unDashedName := regexp.MustCompile("-|_").ReplaceAllString(origName, " ")
-	titledName := strings.Title(unDashedName)
-	return strings.Replace(titledName, " ", "", -1)
+// copied from golint (https://github.com/golang/lint/blob/4946cea8b6efd778dc31dc2dbeb919535e1b7529/lint.go#L701)
+var commonInitialisms = map[string]bool{
+	"API":   true,
+	"ASCII": true,
+	"CPU":   true,
+	"CSS":   true,
+	"DNS":   true,
+	"EOF":   true,
+	"GUID":  true,
+	"HTML":  true,
+	"HTTP":  true,
+	"HTTPS": true,
+	"ID":    true,
+	"IP":    true,
+	"JSON":  true,
+	"LHS":   true,
+	"QPS":   true,
+	"RAM":   true,
+	"RHS":   true,
+	"RPC":   true,
+	"SLA":   true,
+	"SMTP":  true,
+	"SQL":   true,
+	"SSH":   true,
+	"TCP":   true,
+	"TLS":   true,
+	"TTL":   true,
+	"UDP":   true,
+	"UI":    true,
+	"UID":   true,
+	"UUID":  true,
+	"URI":   true,
+	"URL":   true,
+	"UTF8":  true,
+	"VM":    true,
+	"XML":   true,
+	"XSRF":  true,
+	"XSS":   true,
 }
 
-func getType(s *Schema, pName, pDesc string) (typeName string) {
+func dashedToWords(s string) string {
+	return regexp.MustCompile("-|_").ReplaceAllString(s, " ")
+}
+
+func camelCaseToWords(s string) string {
+	return regexp.MustCompile(`([\p{Ll}\p{N}])(\p{Lu})`).ReplaceAllString(s, "$1 $2")
+}
+
+func generateTypeName(origName string) string {
+	spacedName := camelCaseToWords(dashedToWords(origName))
+	titledName := strings.Title(spacedName)
+	nameParts := strings.Split(titledName, " ")
+	for i, part := range nameParts {
+		upperedPart := strings.ToUpper(part)
+		if commonInitialisms[upperedPart] {
+			nameParts[i] = upperedPart
+		}
+	}
+	return strings.Join(nameParts, "")
+}
+
+func getType(s *schema, pName, pDesc string) (typeName string) {
 	var st structType
 
 	if pName != "" {
@@ -155,9 +210,9 @@ func getType(s *Schema, pName, pDesc string) (typeName string) {
 	return
 }
 
-func getArrayTypeSchema(typeInterface interface{}) *Schema {
+func getArrayTypeSchema(typeInterface interface{}) *schema {
 	itemSchemaJSON, _ := json.Marshal(typeInterface)
-	var itemSchema Schema
+	var itemSchema schema
 	json.Unmarshal(itemSchemaJSON, &itemSchema)
 	return &itemSchema
 }
@@ -196,7 +251,7 @@ func main() {
 		log.Fatalln("Error reading file:", err)
 	}
 
-	var s Schema
+	var s schema
 	if err := json.Unmarshal(file, &s); err != nil {
 		log.Fatalln("Error parsing JSON:", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/gedex/inflector"
@@ -18,7 +19,7 @@ import (
 
 var (
 	needTimeImport bool
-	structTypes    []structType
+	structTypes    structTypeSlice
 	outToStdout    = flag.Bool("c", false, "output to console; overrides \"-o\"")
 	outputFile     = flag.String("o", "", "output file name; default is <schema>_schematype.go")
 	packageName    = flag.String("p", "main", "package name for generated file; default is \"main\"")
@@ -32,10 +33,38 @@ type structField struct {
 	Required     bool
 }
 
+type structFieldSlice []structField
+
+func (s structFieldSlice) Len() int {
+	return len(s)
+}
+
+func (s structFieldSlice) Less(i, j int) bool {
+	return s[i].Name < s[j].Name
+}
+
+func (s structFieldSlice) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
 type structType struct {
 	Name    string
-	Fields  []structField
+	Fields  structFieldSlice
 	Comment string
+}
+
+type structTypeSlice []structType
+
+func (s structTypeSlice) Len() int {
+	return len(s)
+}
+
+func (s structTypeSlice) Less(i, j int) bool {
+	return s[i].Name < s[j].Name
+}
+
+func (s structTypeSlice) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
 }
 
 func getTypeString(jsonType, format string) string {
@@ -222,6 +251,7 @@ func (st structType) print(buf *bytes.Buffer) {
 		buf.WriteString(fmt.Sprintln("//", st.Comment))
 	}
 	buf.WriteString(fmt.Sprintln("type ", st.Name, " struct {"))
+	sort.Stable(st.Fields)
 	for _, sf := range st.Fields {
 		var typeString string
 		if sf.Nullable && sf.Type != "interface{}" {
@@ -266,6 +296,7 @@ func main() {
 	if needTimeImport {
 		resultSrc.WriteString("import \"time\"\n")
 	}
+	sort.Stable(structTypes)
 	for _, st := range structTypes {
 		st.print(&resultSrc)
 		resultSrc.WriteString("\n")

@@ -224,7 +224,7 @@ func (st structType) print(buf *bytes.Buffer) {
 	buf.WriteString(fmt.Sprintln("type ", st.Name, " struct {"))
 	for _, sf := range st.Fields {
 		var typeString string
-		if sf.Nullable {
+		if sf.Nullable && sf.Type != "interface{}" {
 			typeString = "*"
 		}
 		typeString += sf.Type

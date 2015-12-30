@@ -214,7 +214,11 @@ func getType(s *schema, pName, pDesc string) (typeName string) {
 			log.Fatalf("Can't create field %v without type.", fieldName)
 		}
 		if sf.Type == "object" {
-			sf.Type = getType(propSchema, sf.Name, propSchema.Description)
+			if len(propSchema.Properties) > 0 {
+				sf.Type = getType(propSchema, sf.Name, propSchema.Description)
+			} else {
+				sf.Type = "map[string]interface{}"
+			}
 		} else if sf.Type == "array" {
 			switch arrayItemType := propSchema.Items.(type) {
 			case []interface{}:
@@ -228,6 +232,8 @@ func getType(s *schema, pName, pDesc string) (typeName string) {
 				singularName := inflector.Singularize(sf.Name)
 				schema := getArrayTypeSchema(arrayItemType)
 				sf.Type = "[]" + getType(schema, singularName, propSchema.Description)
+			default:
+				sf.Type = "[]interface{}"
 			}
 		}
 

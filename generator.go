@@ -18,11 +18,9 @@ import (
 )
 
 var (
-	needTimeImport bool
-	structTypes    structTypeSlice
-	outToStdout    = flag.Bool("c", false, "output to console; overrides \"-o\"")
-	outputFile     = flag.String("o", "", "output file name; default is <schema>_schematype.go")
-	packageName    = flag.String("p", "main", "package name for generated file; default is \"main\"")
+	outToStdout = flag.Bool("c", false, "output to console; overrides \"-o\"")
+	outputFile  = flag.String("o", "", "output file name; default is <schema>_schematype.go")
+	packageName = flag.String("p", "main", "package name for generated file; default is \"main\"")
 )
 
 type structField struct {
@@ -33,39 +31,64 @@ type structField struct {
 	Required     bool
 }
 
-type structFieldSlice []structField
+type structFields []structField
 
-func (s structFieldSlice) Len() int {
+func (s structFields) Len() int {
 	return len(s)
 }
 
-func (s structFieldSlice) Less(i, j int) bool {
+func (s structFields) Less(i, j int) bool {
 	return s[i].Name < s[j].Name
 }
 
-func (s structFieldSlice) Swap(i, j int) {
+func (s structFields) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
-type structType struct {
+type goType struct {
 	Name    string
-	Fields  structFieldSlice
+	Fields  structFields
 	Comment string
 }
 
-type structTypeSlice []structType
+func (gt goType) print(buf *bytes.Buffer) {
+	if gt.Comment != "" {
+		buf.WriteString(fmt.Sprintln("//", gt.Comment))
+	}
+	buf.WriteString(fmt.Sprintln("type ", gt.Name, " struct {"))
+	sort.Stable(gt.Fields)
+	for _, sf := range gt.Fields {
+		var typeString string
+		if sf.Nullable && sf.Type != "interface{}" {
+			typeString = "*"
+		}
+		typeString += sf.Type
 
-func (s structTypeSlice) Len() int {
-	return len(s)
+		tagString := "`json:\"" + sf.PropertyName
+		if !sf.Required {
+			tagString += ",omitempty"
+		}
+		tagString += "\"`"
+		buf.WriteString(fmt.Sprintln("   ", sf.Name, "  ", typeString, "  ", tagString))
+	}
+	buf.WriteString("}\n")
 }
 
-func (s structTypeSlice) Less(i, j int) bool {
-	return s[i].Name < s[j].Name
+type goTypes []goType
+
+func (t goTypes) Len() int {
+	return len(t)
 }
 
-func (s structTypeSlice) Swap(i, j int) {
-	s[i], s[j] = s[j], s[i]
+func (t goTypes) Less(i, j int) bool {
+	return t[i].Name < t[j].Name
 }
+
+func (t goTypes) Swap(i, j int) {
+	t[i], t[j] = t[j], t[i]
+}
+
+var needTimeImport bool
 
 func getTypeString(jsonType, format string) string {
 	if format == "date-time" {
@@ -154,22 +177,24 @@ func generateTypeName(origName string) string {
 	return strings.Join(nameParts, "")
 }
 
+var types goTypes
+
 func getType(s *schema, pName, pDesc string) (typeName string) {
-	var st structType
+	var gt goType
 
 	if pName != "" {
 		typeName = pName
 	} else {
 		typeName = s.Title
 	}
-	if st.Name = generateTypeName(typeName); st.Name == "" {
+	if gt.Name = generateTypeName(typeName); gt.Name == "" {
 		log.Fatalln("Can't generate type without name.")
 	}
 
 	if pDesc != "" {
-		st.Comment = pDesc
+		gt.Comment = pDesc
 	} else {
-		st.Comment = s.Description
+		gt.Comment = s.Description
 	}
 
 	required := make(map[string]bool)
@@ -237,10 +262,10 @@ func getType(s *schema, pName, pDesc string) (typeName string) {
 			}
 		}
 
-		st.Fields = append(st.Fields, sf)
+		gt.Fields = append(gt.Fields, sf)
 	}
 
-	structTypes = append(structTypes, st)
+	types = append(types, gt)
 
 	return
 }
@@ -250,29 +275,6 @@ func getArrayTypeSchema(typeInterface interface{}) *schema {
 	var itemSchema schema
 	json.Unmarshal(itemSchemaJSON, &itemSchema)
 	return &itemSchema
-}
-
-func (st structType) print(buf *bytes.Buffer) {
-	if st.Comment != "" {
-		buf.WriteString(fmt.Sprintln("//", st.Comment))
-	}
-	buf.WriteString(fmt.Sprintln("type ", st.Name, " struct {"))
-	sort.Stable(st.Fields)
-	for _, sf := range st.Fields {
-		var typeString string
-		if sf.Nullable && sf.Type != "interface{}" {
-			typeString = "*"
-		}
-		typeString += sf.Type
-
-		tagString := "`json:\"" + sf.PropertyName
-		if !sf.Required {
-			tagString += ",omitempty"
-		}
-		tagString += "\"`"
-		buf.WriteString(fmt.Sprintln("   ", sf.Name, "  ", typeString, "  ", tagString))
-	}
-	buf.WriteString("}\n")
 }
 
 func main() {
@@ -302,9 +304,9 @@ func main() {
 	if needTimeImport {
 		resultSrc.WriteString("import \"time\"\n")
 	}
-	sort.Stable(structTypes)
-	for _, st := range structTypes {
-		st.print(&resultSrc)
+	sort.Stable(types)
+	for _, gt := range types {
+		gt.print(&resultSrc)
 		resultSrc.WriteString("\n")
 	}
 	formattedSrc, err := format.Source(resultSrc.Bytes())

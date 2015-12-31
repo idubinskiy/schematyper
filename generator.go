@@ -333,7 +333,7 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 		}
 		if hasProps && !hasAddlProps {
 			gt.Type = "struct"
-		} else if hasAddlProps && !hasProps {
+		} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 			singularName := singularize(origTypeName)
 			gotType := processType(addlPropsSchema, singularName, s.Description, path+"/additionalProperties")
 			if gotType == "" {
@@ -427,8 +427,8 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 
 		if sf.Type == "object" {
 			if hasProps && !hasAddlProps {
-				sf.Type = "struct"
-			} else if hasAddlProps && !hasProps {
+				sf.Type = processType(propSchema, sf.Name, propSchema.Description, refPath)
+			} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 				singularName := singularize(propName)
 				gotType := processType(addlPropsSchema, singularName, propSchema.Description, refPath+"/additionalProperties")
 				if gotType == "" {

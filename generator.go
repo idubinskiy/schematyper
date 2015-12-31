@@ -56,6 +56,9 @@ type goType struct {
 	Nullable bool
 	Fields   structFields
 	Comment  string
+
+	parentPath   string
+	origTypeName string
 }
 
 func (gt goType) print(buf *bytes.Buffer) {
@@ -253,15 +256,17 @@ func parseAdditionalProperties(ap interface{}) (hasAddl bool, addlSchema *metaSc
 }
 
 type deferredType struct {
-	schema *metaSchema
-	name   string
-	desc   string
+	schema     *metaSchema
+	name       string
+	desc       string
+	parentPath string
 }
 
 var types = make(map[string]goType)
 var deferredTypes = make(map[string]deferredType)
+var typesByName = make(map[string]map[string]bool)
 
-func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
+func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName string) {
 	var gt goType
 
 	// avoid 'recursive type' problem, at least for the root type
@@ -273,23 +278,22 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 		if refType, ok := types[s.Ref]; ok {
 			return refType.Name
 		}
-		deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc}
+		deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 		return ""
 	}
 
-	defer func() { types[path] = gt }()
+	gt.parentPath = parentPath
 
-	var origTypeName string
 	if path == "#" {
-		origTypeName = *rootTypeName
+		gt.origTypeName = *rootTypeName
 		gt.Name = *rootTypeName
 	} else {
-		origTypeName = s.Title
-		if origTypeName == "" {
-			origTypeName = pName
+		gt.origTypeName = s.Title
+		if gt.origTypeName == "" {
+			gt.origTypeName = pName
 		}
 
-		if gt.Name = generateTypeName(origTypeName); gt.Name == "" {
+		if gt.Name = generateTypeName(gt.origTypeName); gt.Name == "" {
 			log.Fatalln("Can't generate type without name.")
 		}
 	}
@@ -305,6 +309,15 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 	for _, req := range s.Required {
 		required[string(req)] = true
 	}
+
+	defer func() {
+		types[path] = gt
+
+		if typesByName[gt.Name] == nil {
+			typesByName[gt.Name] = make(map[string]bool)
+		}
+		typesByName[gt.Name][path] = true
+	}()
 
 	var jsonType string
 	switch schemaType := s.Type.(type) {
@@ -334,10 +347,10 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 		if hasProps && !hasAddlProps {
 			gt.Type = "struct"
 		} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
-			singularName := singularize(origTypeName)
-			gotType := processType(addlPropsSchema, singularName, s.Description, path+"/additionalProperties")
+			singularName := singularize(gt.origTypeName)
+			gotType := processType(addlPropsSchema, singularName, s.Description, path+"/additionalProperties", path)
 			if gotType == "" {
-				deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc}
+				deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 				return ""
 			}
 			gt.Type = "map[string]" + gotType
@@ -348,11 +361,11 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 		switch arrayItemType := s.Items.(type) {
 		case []interface{}:
 			if len(arrayItemType) == 1 {
-				singularName := singularize(origTypeName)
+				singularName := singularize(gt.origTypeName)
 				typeSchema := getTypeSchema(arrayItemType[0])
-				gotType := processType(typeSchema, singularName, s.Description, path+"/items/0")
+				gotType := processType(typeSchema, singularName, s.Description, path+"/items/0", path)
 				if gotType == "" {
-					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc}
+					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 					return ""
 				}
 				gt.Type = "[]" + gotType
@@ -360,11 +373,11 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 				gt.Type = "[]interface{}"
 			}
 		case interface{}:
-			singularName := singularize(origTypeName)
+			singularName := singularize(gt.origTypeName)
 			typeSchema := getTypeSchema(arrayItemType)
-			gotType := processType(typeSchema, singularName, s.Description, path+"/items")
+			gotType := processType(typeSchema, singularName, s.Description, path+"/items", path)
 			if gotType == "" {
-				deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc}
+				deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 				return ""
 			}
 			gt.Type = "[]" + gotType
@@ -397,7 +410,7 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 				gt.Fields = append(gt.Fields, sf)
 				continue
 			}
-			deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc}
+			deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 			return ""
 		}
 
@@ -427,12 +440,12 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 
 		if sf.Type == "object" {
 			if hasProps && !hasAddlProps {
-				sf.Type = processType(propSchema, sf.Name, propSchema.Description, refPath)
+				sf.Type = processType(propSchema, sf.Name, propSchema.Description, refPath, path)
 			} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 				singularName := singularize(propName)
-				gotType := processType(addlPropsSchema, singularName, propSchema.Description, refPath+"/additionalProperties")
+				gotType := processType(addlPropsSchema, singularName, propSchema.Description, refPath+"/additionalProperties", path)
 				if gotType == "" {
-					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc}
+					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 					return ""
 				}
 				sf.Type = "map[string]" + gotType
@@ -445,9 +458,9 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 				if len(arrayItemType) == 1 {
 					singularName := singularize(propName)
 					typeSchema := getTypeSchema(arrayItemType[0])
-					gotType := processType(typeSchema, singularName, propSchema.Description, refPath+"/items/0")
+					gotType := processType(typeSchema, singularName, propSchema.Description, refPath+"/items/0", path)
 					if gotType == "" {
-						deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc}
+						deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 						return ""
 					}
 					sf.Type = "[]" + gotType
@@ -457,9 +470,9 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 			case interface{}:
 				singularName := singularize(propName)
 				typeSchema := getTypeSchema(arrayItemType)
-				gotType := processType(typeSchema, singularName, propSchema.Description, refPath+"/items")
+				gotType := processType(typeSchema, singularName, propSchema.Description, refPath+"/items", path)
 				if gotType == "" {
-					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc}
+					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 					return ""
 				}
 				sf.Type = "[]" + gotType
@@ -477,9 +490,54 @@ func processType(s *metaSchema, pName, pDesc, path string) (typeName string) {
 func processDeferred() {
 	for len(deferredTypes) > 0 {
 		for path, deferred := range deferredTypes {
-			name := processType(deferred.schema, deferred.name, deferred.desc, path)
+			name := processType(deferred.schema, deferred.name, deferred.desc, path, deferred.parentPath)
 			if name != "" {
 				delete(deferredTypes, path)
+			}
+		}
+	}
+}
+
+func dedupeTypes() {
+	for len(typesByName) > 0 {
+		// clear all singles first; otherwise some types will not be disambiguated
+		for name, dupes := range typesByName {
+			if len(dupes) == 1 {
+				delete(typesByName, name)
+			}
+		}
+
+		for name, dupes := range typesByName {
+			// delete these dupes; will put back in as necessary in subsequent loop
+			delete(typesByName, name)
+
+			for dupePath := range dupes {
+				gt := types[dupePath]
+				parent := types[gt.parentPath]
+
+				// handle parents before children to avoid stuttering
+				if _, ok := typesByName[parent.Name]; ok {
+					// add back the child to be processed later
+					if typesByName[gt.Name] == nil {
+						typesByName[gt.Name] = make(map[string]bool)
+					}
+					typesByName[gt.Name][dupePath] = true
+					continue
+				}
+
+				if parent.origTypeName == "" {
+					log.Fatalln("Can't disabiguate:", dupes)
+				}
+
+				gt.origTypeName = parent.origTypeName + "-" + gt.origTypeName
+				gt.Name = generateTypeName(gt.origTypeName)
+				types[dupePath] = gt
+
+				// add with new name in case we still have dupes
+				if typesByName[gt.Name] == nil {
+					typesByName[gt.Name] = make(map[string]bool)
+				}
+				typesByName[gt.Name][dupePath] = true
 			}
 		}
 	}
@@ -488,9 +546,9 @@ func processDeferred() {
 func parseDefs(s *metaSchema) {
 	defs := getTypeSchemas(s.Definitions)
 	for defName, defSchema := range defs {
-		name := processType(defSchema, defName, defSchema.Description, "#/definitions/"+defName)
+		name := processType(defSchema, defName, defSchema.Description, "#/definitions/"+defName, "")
 		if name == "" {
-			deferredTypes["#/definitions/"+defName] = deferredType{schema: defSchema, name: defName, desc: defSchema.Description}
+			deferredTypes["#/definitions/"+defName] = deferredType{schema: defSchema, name: defName, desc: defSchema.Description, parentPath: ""}
 		}
 	}
 }
@@ -518,8 +576,9 @@ func main() {
 	if *rootTypeName == "" {
 		*rootTypeName = schemaName
 	}
-	processType(&s, *rootTypeName, s.Description, "#")
+	processType(&s, *rootTypeName, s.Description, "#", "")
 	processDeferred()
+	dedupeTypes()
 
 	var resultSrc bytes.Buffer
 	resultSrc.WriteString(fmt.Sprintln("package", *packageName))

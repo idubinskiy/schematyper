@@ -18,14 +18,27 @@ Output file can be set with `-o`:
 $ schematyper -o schema_type.go schema.json
 ```
 
-Output package name can be set with `-p`:
+Output package name can be set with `-package`:
 ```
-$ schematyper -p schema schema.json
+$ schematyper -package=schema schema.json
 ```
+Defaults to `package main`, with unexported types. Any other package name defaults to exported types.
+
+Name of root type can be set with `-root-type`:
+```
+$ schematyper -root-type=mySchema schema.json
+```
+
+Prefixes for non-root types can be set with `-prefix`:
+```
+$ schematyper -prefix=my schema.json
+```
+
+(`-root-type` and `-prefix` override default exporting rules.)
 
 Can be used with [`go generate`](https://blog.golang.org/generate):
 ```go
-//go:generate schematyper -o schema_type.go -p mypackage schemas/schema.json
+//go:generate schematyper -o schema_type.go -package mypackage schemas/schema.json
 ```
 
 Print to stdout without outputting to file with `-c`.
@@ -33,18 +46,21 @@ Print to stdout without outputting to file with `-c`.
 $ schematyper -c schema.json
 ```
 
-## Schema Validation Support
+## Schema Features Support
 Supports the following JSON Schema keywords:
 * `title` - sets type name
 * `description` - sets type comment
 * `required` - sets which fields in type don't have `omitempty`
-* `properties` - struct fields
-* `type` - sets field type (`string`, `bool`, etc.)
+* `properties` - determines struct fields
+* `additionalProperties` - determines struct type of map values
+* `type` - sets field type (`string`, `bool`, etc.). Examples:
     * `["string", "null"]` sets `*string`
-    * `"object"` creates new nested struct type
+    * `"object"` sets `map[string]interface{}`, `map[string]<new type>`, or a new struct type depending on schema
+    * `"array"` sets `[]interface{}` or `[]<new type>` depending on schema
     * `["string", "integer"]` sets `interface{}`
-* `items` - sets slice type (for `array`)
+* `items` - sets array items type, similar to `type`
 * `format` - if `date-time`, sets type to `time.Time` and imports `time`
+* `definitions` - creates additional types which can be referenced using `$ref`
+* `$ref` - Reference a local schema (same file).
 
-
-**NOTE: `definitions` and `ref` not yet supported.**
+Support for more features is pending, but many will require adding run-time checks by implementing the `json.Marshaler` and `json.Unmarshaler` interfaces.

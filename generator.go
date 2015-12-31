@@ -619,7 +619,8 @@ func main() {
 
 	schemaName := strings.Split(filepath.Base(flag.Arg(0)), ".")[0]
 	if *rootTypeName == "" {
-		*rootTypeName = schemaName
+		exported := *packageName != "main"
+		*rootTypeName = generateIdentifier(schemaName, exported)
 	}
 	processType(&s, *rootTypeName, s.Description, "#", "")
 	processDeferred()

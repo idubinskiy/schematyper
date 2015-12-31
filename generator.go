@@ -131,45 +131,68 @@ func getTypeString(jsonType, format string) string {
 	}
 }
 
-// copied from golint (https://github.com/golang/lint/blob/4946cea8b6efd778dc31dc2dbeb919535e1b7529/lint.go#L701)
-var commonInitialisms = map[string]bool{
-	"API":   true,
-	"ASCII": true,
-	"CPU":   true,
-	"CSS":   true,
-	"DNS":   true,
-	"EOF":   true,
-	"GUID":  true,
-	"HTML":  true,
-	"HTTP":  true,
-	"HTTPS": true,
-	"ID":    true,
-	"IP":    true,
-	"JSON":  true,
-	"LHS":   true,
-	"QPS":   true,
-	"RAM":   true,
-	"RHS":   true,
-	"RPC":   true,
-	"SLA":   true,
-	"SMTP":  true,
-	"SQL":   true,
-	"SSH":   true,
-	"TCP":   true,
-	"TLS":   true,
-	"TTL":   true,
-	"UDP":   true,
-	"UI":    true,
-	"UID":   true,
-	"UUID":  true,
-	"URI":   true,
-	"URL":   true,
-	"UTF8":  true,
-	"VM":    true,
-	"XML":   true,
-	"XSRF":  true,
-	"XSS":   true,
+type stringSet map[string]struct{}
+
+func newStringSet(vals ...string) stringSet {
+	s := make(stringSet)
+	for _, val := range vals {
+		s[val] = struct{}{}
+	}
+	return s
 }
+
+func (s stringSet) add(val string) {
+	s[val] = struct{}{}
+}
+
+func (s stringSet) remove(val string) {
+	delete(s, val)
+}
+
+func (s stringSet) exists(val string) bool {
+	_, ok := s[val]
+	return ok
+}
+
+// copied from golint (https://github.com/golang/lint/blob/4946cea8b6efd778dc31dc2dbeb919535e1b7529/lint.go#L701)
+var commonInitialisms = newStringSet(
+	"API",
+	"ASCII",
+	"CPU",
+	"CSS",
+	"DNS",
+	"EOF",
+	"GUID",
+	"HTML",
+	"HTTP",
+	"HTTPS",
+	"ID",
+	"IP",
+	"JSON",
+	"LHS",
+	"QPS",
+	"RAM",
+	"RHS",
+	"RPC",
+	"SLA",
+	"SMTP",
+	"SQL",
+	"SSH",
+	"TCP",
+	"TLS",
+	"TTL",
+	"UDP",
+	"UI",
+	"UID",
+	"UUID",
+	"URI",
+	"URL",
+	"UTF8",
+	"VM",
+	"XML",
+	"XSRF",
+	"XSS",
+)
 
 func dashedToWords(s string) string {
 	return regexp.MustCompile("-|_").ReplaceAllString(s, " ")
@@ -181,7 +204,7 @@ func camelCaseToWords(s string) string {
 
 func getExportedIdentifierPart(part string) string {
 	upperedPart := strings.ToUpper(part)
-	if commonInitialisms[upperedPart] {
+	if commonInitialisms.exists(upperedPart) {
 		return upperedPart
 	}
 	return strings.Title(strings.ToLower(part))
@@ -262,9 +285,41 @@ type deferredType struct {
 	parentPath string
 }
 
+type stringSetMap map[string]stringSet
+
+func (m stringSetMap) addTo(set, val string) {
+	if m[set] == nil {
+		m[set] = newStringSet()
+	}
+	m[set].add(val)
+}
+
+func (m stringSetMap) removeFrom(set, val string) {
+	if m[set] == nil {
+		return
+	}
+	m[set].remove(val)
+}
+
+func (m stringSetMap) existsIn(set, val string) bool {
+	if m[set] == nil {
+		return false
+	}
+	return m[set].exists(val)
+}
+
+func (m stringSetMap) delete(set string) {
+	delete(m, set)
+}
+
+func (m stringSetMap) has(set string) bool {
+	_, ok := m[set]
+	return ok
+}
+
 var types = make(map[string]goType)
 var deferredTypes = make(map[string]deferredType)
-var typesByName = make(map[string]map[string]bool)
+var typesByName = make(stringSetMap)
 
 func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName string) {
 	var gt goType
@@ -305,18 +360,14 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 		gt.Comment = pDesc
 	}
 
-	required := make(map[string]bool)
+	required := newStringSet()
 	for _, req := range s.Required {
-		required[string(req)] = true
+		required.add(string(req))
 	}
 
 	defer func() {
 		types[path] = gt
-
-		if typesByName[gt.Name] == nil {
-			typesByName[gt.Name] = make(map[string]bool)
-		}
-		typesByName[gt.Name][path] = true
+		typesByName.addTo(gt.Name, path)
 	}()
 
 	var jsonType string
@@ -391,7 +442,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 	for propName, propSchema := range props {
 		sf := structField{
 			PropertyName: propName,
-			Required:     required[propName],
+			Required:     required.exists(propName),
 		}
 
 		var fieldName string
@@ -503,25 +554,22 @@ func dedupeTypes() {
 		// clear all singles first; otherwise some types will not be disambiguated
 		for name, dupes := range typesByName {
 			if len(dupes) == 1 {
-				delete(typesByName, name)
+				typesByName.delete(name)
 			}
 		}
 
 		for name, dupes := range typesByName {
 			// delete these dupes; will put back in as necessary in subsequent loop
-			delete(typesByName, name)
+			typesByName.delete(name)
 
 			for dupePath := range dupes {
 				gt := types[dupePath]
 				parent := types[gt.parentPath]
 
 				// handle parents before children to avoid stuttering
-				if _, ok := typesByName[parent.Name]; ok {
+				if typesByName.has(parent.Name) {
 					// add back the child to be processed later
-					if typesByName[gt.Name] == nil {
-						typesByName[gt.Name] = make(map[string]bool)
-					}
-					typesByName[gt.Name][dupePath] = true
+					typesByName.addTo(gt.Name, dupePath)
 					continue
 				}
 
@@ -534,10 +582,7 @@ func dedupeTypes() {
 				types[dupePath] = gt
 
 				// add with new name in case we still have dupes
-				if typesByName[gt.Name] == nil {
-					typesByName[gt.Name] = make(map[string]bool)
-				}
-				typesByName[gt.Name][dupePath] = true
+				typesByName.addTo(gt.Name, dupePath)
 			}
 		}
 	}

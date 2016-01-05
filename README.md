@@ -13,37 +13,27 @@ $ schematyper schema.json
 ```
 Creates a `schema_schematype.go` file with package `main`.
 
-Output file can be set with `-o`:
+Command line options:
 ```
-$ schematyper -o schema_type.go schema.json
+usage: schematyper [<flags>] <input>
+
+Flags:
+      --help                 Show context-sensitive help (also try --help-long and --help-man).
+  -c, --console              output to console instead of file
+  -o, --out-file=OUT-FILE    filename for output; default is <schema>_schematype.go
+      --package="main"       package name for generated file; default is "main"
+      --root-type=ROOT-TYPE  name of root type; default is generated from the filename
+      --prefix=PREFIX        prefix for non-root types
+
+Args:
+  <input>  file containing a valid JSON schema
 ```
 
-Output package name can be set with `-package`:
-```
-$ schematyper -package=schema schema.json
-```
-Defaults to `package main`, with unexported types. Any other package name defaults to exported types.
-
-Name of root type can be set with `-root-type`:
-```
-$ schematyper -root-type=mySchema schema.json
-```
-
-Prefixes for non-root types can be set with `-prefix`:
-```
-$ schematyper -prefix=my schema.json
-```
-
-(`-root-type` and `-prefix` override default exporting rules.)
+`package main` (the default) will generate unexported types. Any other package name defaults to exported types. `--root-type` and `--prefix` can be used to override this behavior.
 
 Can be used with [`go generate`](https://blog.golang.org/generate):
 ```go
 //go:generate schematyper -o schema_type.go -package mypackage schemas/schema.json
-```
-
-Print to stdout without outputting to file with `-c`.
-```
-$ schematyper -c schema.json
 ```
 
 ## Schema Features Support

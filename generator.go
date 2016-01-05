@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"go/format"
 	"io/ioutil"
@@ -15,17 +14,20 @@ import (
 	"strings"
 	"unicode"
 
+	"gopkg.in/alecthomas/kingpin.v2"
+
 	"github.com/gedex/inflector"
 )
 
 //go:generate schematyper -root-type=metaSchema -prefix=meta metaschema.json
 
 var (
-	outToStdout     = flag.Bool("c", false, `output to console; overrides "-o"`)
-	outputFile      = flag.String("o", "", "output file name; default is <schema>_schematype.go")
-	packageName     = flag.String("package", "main", `package name for generated file; default is "main"`)
-	rootTypeName    = flag.String("root-type", "", `name of root type; default is generated from the filename`)
-	typeNamesPrefix = flag.String("prefix", "", `prefix for non-root types`)
+	outToStdout     = kingpin.Flag("console", "output to console instead of file").Default("false").Short('c').Bool()
+	outputFile      = kingpin.Flag("out-file", "filename for output; default is <schema>_schematype.go").Short('o').String()
+	packageName     = kingpin.Flag("package", `package name for generated file; default is "main"`).Default("main").String()
+	rootTypeName    = kingpin.Flag("root-type", `name of root type; default is generated from the filename`).String()
+	typeNamesPrefix = kingpin.Flag("prefix", `prefix for non-root types`).String()
+	inputFile       = kingpin.Arg("input", "file containing a valid JSON schema").Required().ExistingFile()
 )
 
 type structField struct {
@@ -599,13 +601,9 @@ func parseDefs(s *metaSchema) {
 }
 
 func main() {
-	flag.Parse()
+	kingpin.Parse()
 
-	if flag.NArg() == 0 {
-		log.Fatalln("No file to parse.")
-	}
-
-	file, err := ioutil.ReadFile(flag.Arg(0))
+	file, err := ioutil.ReadFile(*inputFile)
 	if err != nil {
 		log.Fatalln("Error reading file:", err)
 	}
@@ -617,7 +615,7 @@ func main() {
 
 	parseDefs(&s)
 
-	schemaName := strings.Split(filepath.Base(flag.Arg(0)), ".")[0]
+	schemaName := strings.Split(filepath.Base(*inputFile), ".")[0]
 	if *rootTypeName == "" {
 		exported := *packageName != "main"
 		*rootTypeName = generateIdentifier(schemaName, exported)

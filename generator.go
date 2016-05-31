@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/format"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -153,6 +155,22 @@ func newStringSet(vals ...string) stringSet {
 	return s
 }
 
+func stringSetFromMapKeys(vals interface{}) (stringSet, error) {
+	v := reflect.ValueOf(vals)
+	if v.Kind() != reflect.Map {
+		return nil, errors.New("not a map")
+	}
+	if v.Type().Key().Kind() != reflect.String {
+		return nil, errors.New("map values are not type string")
+	}
+
+	s := make(stringSet)
+	for _, val := range v.MapKeys() {
+		s[val.Interface().(string)] = struct{}{}
+	}
+	return s, nil
+}
+
 func (s stringSet) add(val string) {
 	s[val] = struct{}{}
 }
@@ -164,6 +182,44 @@ func (s stringSet) remove(val string) {
 func (s stringSet) exists(val string) bool {
 	_, ok := s[val]
 	return ok
+}
+
+func (s stringSet) equals(t stringSet) bool {
+	if len(s) != len(t) {
+		return false
+	}
+
+	for val := range s {
+		if _, ok := t[val]; !ok {
+			return false
+		}
+	}
+
+	for val := range t {
+		if _, ok := s[val]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (s stringSet) String() string {
+	b := bytes.Buffer{}
+	b.WriteRune('(')
+
+	for val := range s {
+		b.WriteString(val)
+		b.WriteRune(' ')
+	}
+
+	if size := b.Len(); size > 1 {
+		b.Truncate(size - 1)
+	}
+
+	b.WriteRune(')')
+
+	return b.String()
 }
 
 // copied from golint (https://github.com/golang/lint/blob/4946cea8b6efd778dc31dc2dbeb919535e1b7529/lint.go#L701)
@@ -562,11 +618,19 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 
 func processDeferred() {
 	for len(deferredTypes) > 0 {
+		startDeferredPaths, _ := stringSetFromMapKeys(deferredTypes)
 		for path, deferred := range deferredTypes {
+			startDeferredPaths.add(path)
 			name := processType(deferred.schema, deferred.name, deferred.desc, path, deferred.parentPath)
 			if name != "" {
 				delete(deferredTypes, path)
 			}
+		}
+
+		// if the list is the same as before, we're stuck
+		endDeferredPaths, _ := stringSetFromMapKeys(deferredTypes)
+		if endDeferredPaths.equals(startDeferredPaths) {
+			log.Fatalln("Can't resolve:", startDeferredPaths)
 		}
 	}
 }

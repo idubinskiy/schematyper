@@ -19,7 +19,7 @@ import (
 	"github.com/gedex/inflector"
 )
 
-//go:generate schematyper -root-type=metaSchema -prefix=meta metaschema.json
+//go:generate schematyper --root-type=metaSchema --prefix=meta metaschema.json
 
 var (
 	outToStdout     = kingpin.Flag("console", "output to console instead of file").Default("false").Short('c').Bool()
@@ -32,7 +32,8 @@ var (
 
 type structField struct {
 	Name         string
-	Type         string
+	TypeRef      string
+	TypePrefix   string
 	Nullable     bool
 	PropertyName string
 	Required     bool
@@ -53,11 +54,12 @@ func (s structFields) Swap(i, j int) {
 }
 
 type goType struct {
-	Name     string
-	Type     string
-	Nullable bool
-	Fields   structFields
-	Comment  string
+	Name       string
+	TypeRef    string
+	TypePrefix string
+	Nullable   bool
+	Fields     structFields
+	Comment    string
 
 	parentPath   string
 	origTypeName string
@@ -67,26 +69,34 @@ func (gt goType) print(buf *bytes.Buffer) {
 	if gt.Comment != "" {
 		buf.WriteString(fmt.Sprintf("// %s\n", gt.Comment))
 	}
-	buf.WriteString(fmt.Sprintf("type %s %s", gt.Name, gt.Type))
-	if gt.Type != "struct" {
+	typeStr := gt.TypePrefix
+	baseType, ok := types[gt.TypeRef]
+	if ok {
+		typeStr += baseType.Name
+	}
+	buf.WriteString(fmt.Sprintf("type %s %s", gt.Name, typeStr))
+	if typeStr != "struct" {
 		buf.WriteString("\n")
 		return
 	}
 	buf.WriteString(" {\n")
 	sort.Stable(gt.Fields)
 	for _, sf := range gt.Fields {
-		var typeString string
-		if sf.Nullable && sf.Type != "interface{}" {
-			typeString = "*"
+		sfTypeStr := sf.TypePrefix
+		sfBaseType, ok := types[sf.TypeRef]
+		if ok {
+			sfTypeStr += sfBaseType.Name
 		}
-		typeString += sf.Type
+		if sf.Nullable && sfTypeStr != "interface{}" {
+			sfTypeStr = "*" + sfTypeStr
+		}
 
 		tagString := "`json:\"" + sf.PropertyName
 		if !sf.Required {
 			tagString += ",omitempty"
 		}
 		tagString += "\"`"
-		buf.WriteString(fmt.Sprintf("%s %s %s\n", sf.Name, typeString, tagString))
+		buf.WriteString(fmt.Sprintf("%s %s %s\n", sf.Name, sfTypeStr, tagString))
 	}
 	buf.WriteString("}\n")
 }
@@ -323,7 +333,11 @@ var types = make(map[string]goType)
 var deferredTypes = make(map[string]deferredType)
 var typesByName = make(stringSetMap)
 
-func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName string) {
+func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef string) {
+	if len(s.Definitions) > 0 {
+		parseDefs(s, path)
+	}
+
 	var gt goType
 
 	// avoid 'recursive type' problem, at least for the root type
@@ -332,8 +346,8 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 	}
 
 	if s.Ref != "" {
-		if refType, ok := types[s.Ref]; ok {
-			return refType.Name
+		if _, ok := types[s.Ref]; ok {
+			return s.Ref
 		}
 		deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 		return ""
@@ -355,7 +369,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 		}
 	}
 
-	typeName = gt.Name
+	typeRef = path
 
 	gt.Comment = s.Description
 	if gt.Comment == "" {
@@ -398,7 +412,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 			panic(fmt.Errorf("props: %+v\naddlPropsSchema: %+v\n", props, addlPropsSchema))
 		}
 		if hasProps && !hasAddlProps {
-			gt.Type = "struct"
+			gt.TypePrefix = "struct"
 		} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 			singularName := singularize(gt.origTypeName)
 			gotType := processType(addlPropsSchema, singularName, s.Description, path+"/additionalProperties", path)
@@ -406,9 +420,10 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 				deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 				return ""
 			}
-			gt.Type = "map[string]" + gotType
+			gt.TypePrefix = "map[string]"
+			gt.TypeRef = gotType
 		} else {
-			gt.Type = "map[string]interface{}"
+			gt.TypePrefix = "map[string]interface{}"
 		}
 	case "array":
 		switch arrayItemType := s.Items.(type) {
@@ -421,9 +436,10 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 					return ""
 				}
-				gt.Type = "[]" + gotType
+				gt.TypePrefix = "[]"
+				gt.TypeRef = gotType
 			} else {
-				gt.Type = "[]interface{}"
+				gt.TypePrefix = "[]interface{}"
 			}
 		case interface{}:
 			singularName := singularize(gt.origTypeName)
@@ -433,12 +449,13 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 				deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 				return ""
 			}
-			gt.Type = "[]" + gotType
+			gt.TypePrefix = "[]"
+			gt.TypeRef = gotType
 		default:
-			gt.Type = "[]interface{}"
+			gt.TypePrefix = "[]interface{}"
 		}
 	default:
-		gt.Type = typeString
+		gt.TypePrefix = typeString
 	}
 
 	for propName, propSchema := range props {
@@ -459,7 +476,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 
 		if propSchema.Ref != "" {
 			if refType, ok := types[propSchema.Ref]; ok {
-				sf.Type, sf.Nullable = refType.Name, refType.Nullable
+				sf.TypeRef, sf.Nullable = propSchema.Ref, refType.Nullable
 				gt.Fields = append(gt.Fields, sf)
 				continue
 			}
@@ -477,12 +494,12 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 					jsonType = propType[1]
 				}
 
-				sf.Type = getTypeString(jsonType.(string), propSchema.Format)
+				sf.TypePrefix = getTypeString(jsonType.(string), propSchema.Format)
 			}
 		case string:
-			sf.Type = getTypeString(propType, propSchema.Format)
+			sf.TypePrefix = getTypeString(propType, propSchema.Format)
 		case nil:
-			sf.Type = "interface{}"
+			sf.TypePrefix = "interface{}"
 		}
 
 		refPath := path + "/properties/" + propName
@@ -491,9 +508,9 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 		hasProps := len(props) > 0
 		hasAddlProps, addlPropsSchema := parseAdditionalProperties(propSchema.AdditionalProperties)
 
-		if sf.Type == "object" {
+		if sf.TypePrefix == "object" {
 			if hasProps && !hasAddlProps {
-				sf.Type = processType(propSchema, sf.Name, propSchema.Description, refPath, path)
+				sf.TypeRef = processType(propSchema, sf.Name, propSchema.Description, refPath, path)
 			} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 				singularName := singularize(propName)
 				gotType := processType(addlPropsSchema, singularName, propSchema.Description, refPath+"/additionalProperties", path)
@@ -501,11 +518,12 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 					return ""
 				}
-				sf.Type = "map[string]" + gotType
+				sf.TypePrefix = "map[string]"
+				sf.TypeRef = gotType
 			} else {
-				sf.Type = "map[string]interface{}"
+				sf.TypePrefix = "map[string]interface{}"
 			}
-		} else if sf.Type == "array" {
+		} else if sf.TypePrefix == "array" {
 			switch arrayItemType := propSchema.Items.(type) {
 			case []interface{}:
 				if len(arrayItemType) == 1 {
@@ -516,9 +534,10 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 						deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 						return ""
 					}
-					sf.Type = "[]" + gotType
+					sf.TypePrefix = "[]"
+					sf.TypeRef = gotType
 				} else {
-					sf.Type = "[]interface{}"
+					sf.TypePrefix = "[]interface{}"
 				}
 			case interface{}:
 				singularName := singularize(propName)
@@ -528,9 +547,10 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeName
 					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 					return ""
 				}
-				sf.Type = "[]" + gotType
+				sf.TypePrefix = "[]"
+				sf.TypeRef = gotType
 			default:
-				sf.Type = "[]interface{}"
+				sf.TypePrefix = "[]interface{}"
 			}
 		}
 
@@ -590,12 +610,12 @@ func dedupeTypes() {
 	}
 }
 
-func parseDefs(s *metaSchema) {
+func parseDefs(s *metaSchema, path string) {
 	defs := getTypeSchemas(s.Definitions)
 	for defName, defSchema := range defs {
-		name := processType(defSchema, defName, defSchema.Description, "#/definitions/"+defName, "")
+		name := processType(defSchema, defName, defSchema.Description, path+"/definitions/"+defName, path)
 		if name == "" {
-			deferredTypes["#/definitions/"+defName] = deferredType{schema: defSchema, name: defName, desc: defSchema.Description, parentPath: ""}
+			deferredTypes[path+"/definitions/"+defName] = deferredType{schema: defSchema, name: defName, desc: defSchema.Description, parentPath: path}
 		}
 	}
 }
@@ -613,7 +633,7 @@ func main() {
 		log.Fatalln("Error parsing JSON:", err)
 	}
 
-	parseDefs(&s)
+	parseDefs(&s, "#")
 
 	schemaName := strings.Split(filepath.Base(*inputFile), ".")[0]
 	if *rootTypeName == "" {

@@ -3,14 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"go/format"
 	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,6 +17,7 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 
 	"github.com/gedex/inflector"
+	"github.com/idubinskiy/schematyper/stringset"
 )
 
 //go:generate schematyper --root-type=metaSchema --prefix=meta metaschema.json
@@ -145,85 +144,8 @@ func getTypeString(jsonType, format string) string {
 	}
 }
 
-type stringSet map[string]struct{}
-
-func newStringSet(vals ...string) stringSet {
-	s := make(stringSet)
-	for _, val := range vals {
-		s[val] = struct{}{}
-	}
-	return s
-}
-
-func stringSetFromMapKeys(vals interface{}) (stringSet, error) {
-	v := reflect.ValueOf(vals)
-	if v.Kind() != reflect.Map {
-		return nil, errors.New("not a map")
-	}
-	if v.Type().Key().Kind() != reflect.String {
-		return nil, errors.New("map values are not type string")
-	}
-
-	s := make(stringSet)
-	for _, val := range v.MapKeys() {
-		s[val.Interface().(string)] = struct{}{}
-	}
-	return s, nil
-}
-
-func (s stringSet) add(val string) {
-	s[val] = struct{}{}
-}
-
-func (s stringSet) remove(val string) {
-	delete(s, val)
-}
-
-func (s stringSet) exists(val string) bool {
-	_, ok := s[val]
-	return ok
-}
-
-func (s stringSet) equals(t stringSet) bool {
-	if len(s) != len(t) {
-		return false
-	}
-
-	for val := range s {
-		if _, ok := t[val]; !ok {
-			return false
-		}
-	}
-
-	for val := range t {
-		if _, ok := s[val]; !ok {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (s stringSet) String() string {
-	b := bytes.Buffer{}
-	b.WriteRune('(')
-
-	for val := range s {
-		b.WriteString(val)
-		b.WriteRune(' ')
-	}
-
-	if size := b.Len(); size > 1 {
-		b.Truncate(size - 1)
-	}
-
-	b.WriteRune(')')
-
-	return b.String()
-}
-
 // copied from golint (https://github.com/golang/lint/blob/4946cea8b6efd778dc31dc2dbeb919535e1b7529/lint.go#L701)
-var commonInitialisms = newStringSet(
+var commonInitialisms = stringset.New(
 	"API",
 	"ASCII",
 	"CPU",
@@ -272,7 +194,7 @@ func camelCaseToWords(s string) string {
 
 func getExportedIdentifierPart(part string) string {
 	upperedPart := strings.ToUpper(part)
-	if commonInitialisms.exists(upperedPart) {
+	if commonInitialisms.Has(upperedPart) {
 		return upperedPart
 	}
 	return strings.Title(strings.ToLower(part))
@@ -353,27 +275,27 @@ type deferredType struct {
 	parentPath string
 }
 
-type stringSetMap map[string]stringSet
+type stringSetMap map[string]stringset.StringSet
 
 func (m stringSetMap) addTo(set, val string) {
 	if m[set] == nil {
-		m[set] = newStringSet()
+		m[set] = stringset.New()
 	}
-	m[set].add(val)
+	m[set].Add(val)
 }
 
 func (m stringSetMap) removeFrom(set, val string) {
 	if m[set] == nil {
 		return
 	}
-	m[set].remove(val)
+	m[set].Remove(val)
 }
 
 func (m stringSetMap) existsIn(set, val string) bool {
 	if m[set] == nil {
 		return false
 	}
-	return m[set].exists(val)
+	return m[set].Has(val)
 }
 
 func (m stringSetMap) delete(set string) {
@@ -432,9 +354,9 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 		gt.Comment = pDesc
 	}
 
-	required := newStringSet()
+	required := stringset.New()
 	for _, req := range s.Required {
-		required.add(string(req))
+		required.Add(string(req))
 	}
 
 	defer func() {
@@ -517,7 +439,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 	for propName, propSchema := range props {
 		sf := structField{
 			PropertyName: propName,
-			Required:     required.exists(propName),
+			Required:     required.Has(propName),
 		}
 
 		var fieldName string
@@ -618,9 +540,9 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 
 func processDeferred() {
 	for len(deferredTypes) > 0 {
-		startDeferredPaths, _ := stringSetFromMapKeys(deferredTypes)
+		startDeferredPaths, _ := stringset.FromMapKeys(deferredTypes)
 		for path, deferred := range deferredTypes {
-			startDeferredPaths.add(path)
+			startDeferredPaths.Add(path)
 			name := processType(deferred.schema, deferred.name, deferred.desc, path, deferred.parentPath)
 			if name != "" {
 				delete(deferredTypes, path)
@@ -628,8 +550,8 @@ func processDeferred() {
 		}
 
 		// if the list is the same as before, we're stuck
-		endDeferredPaths, _ := stringSetFromMapKeys(deferredTypes)
-		if endDeferredPaths.equals(startDeferredPaths) {
+		endDeferredPaths, _ := stringset.FromMapKeys(deferredTypes)
+		if endDeferredPaths.Equals(startDeferredPaths) {
 			log.Fatalln("Can't resolve:", startDeferredPaths)
 		}
 	}

@@ -310,6 +310,7 @@ func (m stringSetMap) has(set string) bool {
 var types = make(map[string]goType)
 var deferredTypes = make(map[string]deferredType)
 var typesByName = make(stringSetMap)
+var transitiveRefs = make(map[string]string)
 
 func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef string) {
 	if len(s.Definitions) > 0 {
@@ -324,8 +325,17 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 	}
 
 	if s.Ref != "" {
-		if _, ok := types[s.Ref]; ok {
-			return s.Ref
+		ref := s.Ref
+		for {
+			r, ok := transitiveRefs[ref]
+			if !ok {
+				break
+			}
+			ref = r
+		}
+		if _, ok := types[ref]; ok {
+			transitiveRefs[path] = ref
+			return ref
 		}
 		deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
 		return ""

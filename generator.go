@@ -338,13 +338,9 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 	}
 
 	if s.Ref != "" {
-		ref := s.Ref
-		for {
-			r, ok := transitiveRefs[ref]
-			if !ok {
-				break
-			}
-			ref = r
+		ref, ok := transitiveRefs[s.Ref]
+		if !ok {
+			ref = s.Ref
 		}
 		if _, ok := types[ref]; ok {
 			transitiveRefs[path] = ref

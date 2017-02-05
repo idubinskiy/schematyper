@@ -88,7 +88,7 @@ func (gt goType) print(buf *bytes.Buffer) {
 		if ok {
 			sfTypeStr += sfBaseType.Name
 		}
-		if sf.Nullable && sfTypeStr != "interface{}" {
+		if sf.Nullable && sfTypeStr != typeEmptyInterface {
 			sfTypeStr = "*" + sfTypeStr
 		}
 
@@ -118,30 +118,43 @@ func (t goTypes) Swap(i, j int) {
 
 var needTimeImport bool
 
+const (
+	typeString              = "string"
+	typeInteger             = "integer"
+	typeInt                 = "int"
+	typeNumber              = "number"
+	typeFloat64             = "float64"
+	typeBoolean             = "boolean"
+	typeBool                = "bool"
+	typeNull                = "null"
+	typeNil                 = "nil"
+	typeObject              = "object"
+	typeArray               = "array"
+	typeEmptyInterface      = "interface{}"
+	typeEmptyInterfaceSlice = "[]interface{}"
+	typeTime                = "time.Time"
+)
+
+var typeStrings = map[string]string{
+	typeString:  typeString,
+	typeInteger: typeInt,
+	typeNumber:  typeFloat64,
+	typeBoolean: typeBool,
+	typeNull:    typeNil,
+	typeObject:  typeObject,
+	typeArray:   typeArray,
+}
+
 func getTypeString(jsonType, format string) string {
 	if format == "date-time" {
 		needTimeImport = true
-		return "time.Time"
+		return typeTime
 	}
 
-	switch jsonType {
-	case "string":
-		return "string"
-	case "integer":
-		return "int"
-	case "number":
-		return "float64"
-	case "boolean":
-		return "bool"
-	case "null":
-		return "nil"
-	case "array":
-		fallthrough
-	case "object":
-		return jsonType
-	default:
-		return "interface{}"
+	if typeString, ok := typeStrings[jsonType]; ok {
+		return typeString
 	}
+	return typeEmptyInterface
 }
 
 // copied from golint (https://github.com/golang/lint/blob/4946cea8b6efd778dc31dc2dbeb919535e1b7529/lint.go#L701)
@@ -377,11 +390,11 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 	var jsonType string
 	switch schemaType := s.Type.(type) {
 	case []interface{}:
-		if len(schemaType) == 2 && (schemaType[0] == "null" || schemaType[1] == "null") {
+		if len(schemaType) == 2 && (schemaType[0] == typeNull || schemaType[1] == typeNull) {
 			gt.Nullable = true
 
 			jsonType = schemaType[0].(string)
-			if jsonType == "null" {
+			if jsonType == typeNull {
 				jsonType = schemaType[1].(string)
 			}
 		}
@@ -395,7 +408,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 
 	typeString := getTypeString(jsonType, s.Format)
 	switch typeString {
-	case "object":
+	case typeObject:
 		if gt.Name == "Properties" {
 			panic(fmt.Errorf("props: %+v\naddlPropsSchema: %+v\n", props, addlPropsSchema))
 		}
@@ -413,7 +426,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 		} else {
 			gt.TypePrefix = "map[string]interface{}"
 		}
-	case "array":
+	case typeArray:
 		switch arrayItemType := s.Items.(type) {
 		case []interface{}:
 			if len(arrayItemType) == 1 {
@@ -427,7 +440,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 				gt.TypePrefix = "[]"
 				gt.TypeRef = gotType
 			} else {
-				gt.TypePrefix = "[]interface{}"
+				gt.TypePrefix = typeEmptyInterfaceSlice
 			}
 		case interface{}:
 			singularName := singularize(gt.origTypeName)
@@ -440,7 +453,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 			gt.TypePrefix = "[]"
 			gt.TypeRef = gotType
 		default:
-			gt.TypePrefix = "[]interface{}"
+			gt.TypePrefix = typeEmptyInterfaceSlice
 		}
 	default:
 		gt.TypePrefix = typeString
@@ -474,11 +487,11 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 
 		switch propType := propSchema.Type.(type) {
 		case []interface{}:
-			if len(propType) == 2 && (propType[0] == "null" || propType[1] == "null") {
+			if len(propType) == 2 && (propType[0] == typeNull || propType[1] == typeNull) {
 				sf.Nullable = true
 
 				jsonType := propType[0]
-				if jsonType == "null" {
+				if jsonType == typeNull {
 					jsonType = propType[1]
 				}
 
@@ -487,7 +500,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 		case string:
 			sf.TypePrefix = getTypeString(propType, propSchema.Format)
 		case nil:
-			sf.TypePrefix = "interface{}"
+			sf.TypePrefix = typeEmptyInterface
 		}
 
 		refPath := path + "/properties/" + propName
@@ -496,7 +509,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 		hasProps := len(props) > 0
 		hasAddlProps, addlPropsSchema := parseAdditionalProperties(propSchema.AdditionalProperties)
 
-		if sf.TypePrefix == "object" {
+		if sf.TypePrefix == typeObject {
 			if hasProps && !hasAddlProps {
 				sf.TypeRef = processType(propSchema, sf.Name, propSchema.Description, refPath, path)
 			} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
@@ -511,7 +524,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 			} else {
 				sf.TypePrefix = "map[string]interface{}"
 			}
-		} else if sf.TypePrefix == "array" {
+		} else if sf.TypePrefix == typeArray {
 			switch arrayItemType := propSchema.Items.(type) {
 			case []interface{}:
 				if len(arrayItemType) == 1 {
@@ -525,7 +538,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 					sf.TypePrefix = "[]"
 					sf.TypeRef = gotType
 				} else {
-					sf.TypePrefix = "[]interface{}"
+					sf.TypePrefix = typeEmptyInterfaceSlice
 				}
 			case interface{}:
 				singularName := singularize(propName)
@@ -538,7 +551,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 				sf.TypePrefix = "[]"
 				sf.TypeRef = gotType
 			default:
-				sf.TypePrefix = "[]interface{}"
+				sf.TypePrefix = typeEmptyInterfaceSlice
 			}
 		}
 

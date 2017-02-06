@@ -62,8 +62,9 @@ type goType struct {
 	Fields     structFields
 	Comment    string
 
-	parentPath   string
-	origTypeName string
+	parentPath     string
+	origTypeName   string
+	ambiguityDepth int
 }
 
 func (gt goType) print(buf *bytes.Buffer) {
@@ -587,19 +588,31 @@ func dedupeTypes() {
 			}
 		}
 
+		newTypesByName := make(stringSetMap)
+
 		for name, dupes := range typesByName {
 			// delete these dupes; will put back in as necessary in subsequent loop
 			typesByName.delete(name)
 
+		dupesLoop:
 			for dupePath := range dupes {
 				gt := types[dupePath]
-				parent := types[gt.parentPath]
+				gt.ambiguityDepth++
 
-				// handle parents before children to avoid stuttering
-				if typesByName.has(parent.Name) {
-					// add back the child to be processed later
-					typesByName.addTo(gt.Name, dupePath)
-					continue
+				topChild := gt
+				var parent goType
+				for i := 0; i < gt.ambiguityDepth; i++ {
+					parent = types[topChild.parentPath]
+
+					// handle parents before children to avoid stuttering
+					if typesByName.has(parent.Name) {
+						// add back the child to be processed later
+						newTypesByName.addTo(gt.Name, dupePath)
+						gt.ambiguityDepth--
+						continue dupesLoop
+					}
+
+					topChild = parent
 				}
 
 				if parent.origTypeName == "" {
@@ -607,13 +620,15 @@ func dedupeTypes() {
 				}
 
 				gt.origTypeName = parent.origTypeName + "-" + gt.origTypeName
+
 				gt.Name = generateTypeName(gt.origTypeName)
 				types[dupePath] = gt
 
 				// add with new name in case we still have dupes
-				typesByName.addTo(gt.Name, dupePath)
+				newTypesByName.addTo(gt.Name, dupePath)
 			}
 		}
+		typesByName = newTypesByName
 	}
 }
 

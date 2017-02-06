@@ -76,7 +76,7 @@ func (gt goType) print(buf *bytes.Buffer) {
 		typeStr += baseType.Name
 	}
 	buf.WriteString(fmt.Sprintf("type %s %s", gt.Name, typeStr))
-	if typeStr != "struct" {
+	if typeStr != typeStruct {
 		buf.WriteString("\n")
 		return
 	}
@@ -133,6 +133,7 @@ const (
 	typeEmptyInterface      = "interface{}"
 	typeEmptyInterfaceSlice = "[]interface{}"
 	typeTime                = "time.Time"
+	typeStruct              = "struct"
 )
 
 var typeStrings = map[string]string{
@@ -151,8 +152,8 @@ func getTypeString(jsonType, format string) string {
 		return typeTime
 	}
 
-	if typeString, ok := typeStrings[jsonType]; ok {
-		return typeString
+	if ts, ok := typeStrings[jsonType]; ok {
+		return ts
 	}
 	return typeEmptyInterface
 }
@@ -402,14 +403,14 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 	hasProps := len(props) > 0
 	hasAddlProps, addlPropsSchema := parseAdditionalProperties(s.AdditionalProperties)
 
-	typeString := getTypeString(jsonType, s.Format)
-	switch typeString {
+	ts := getTypeString(jsonType, s.Format)
+	switch ts {
 	case typeObject:
 		if gt.Name == "Properties" {
 			panic(fmt.Errorf("props: %+v\naddlPropsSchema: %+v\n", props, addlPropsSchema))
 		}
 		if hasProps && !hasAddlProps {
-			gt.TypePrefix = "struct"
+			gt.TypePrefix = typeStruct
 		} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 			singularName := singularize(gt.origTypeName)
 			gotType := processType(addlPropsSchema, singularName, s.Description, path+"/additionalProperties", path)
@@ -452,7 +453,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 			gt.TypePrefix = typeEmptyInterfaceSlice
 		}
 	default:
-		gt.TypePrefix = typeString
+		gt.TypePrefix = ts
 	}
 
 	for propName, propSchema := range props {
@@ -507,6 +508,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 
 		if sf.TypePrefix == typeObject {
 			if hasProps && !hasAddlProps {
+				sf.TypePrefix = ""
 				sf.TypeRef = processType(propSchema, sf.Name, propSchema.Description, refPath, path)
 			} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 				singularName := singularize(propName)
@@ -634,11 +636,9 @@ func main() {
 	}
 
 	var s metaSchema
-	if err := json.Unmarshal(file, &s); err != nil {
+	if err = json.Unmarshal(file, &s); err != nil {
 		log.Fatalln("Error parsing JSON:", err)
 	}
-
-	parseDefs(&s, "#")
 
 	schemaName := strings.Split(filepath.Base(*inputFile), ".")[0]
 	if *rootTypeName == "" {

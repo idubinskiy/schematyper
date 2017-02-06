@@ -8,6 +8,8 @@ type metaPositiveInteger int
 
 type metaPositiveIntegerDefault0 interface{}
 
+type metaPositiveIntegerDefault0Embedded1 interface{}
+
 // Core schema meta-schema
 type metaSchema struct {
 	AdditionalItems      interface{}                 `json:"additionalItems,omitempty"`

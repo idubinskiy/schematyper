@@ -38,6 +38,7 @@ type structField struct {
 	Nullable     bool
 	PropertyName string
 	Required     bool
+	Embedded     bool
 }
 
 type structFields []structField
@@ -93,11 +94,14 @@ func (gt goType) print(buf *bytes.Buffer) {
 			sfTypeStr = "*" + sfTypeStr
 		}
 
-		tagString := "`json:\"" + sf.PropertyName
-		if !sf.Required {
-			tagString += ",omitempty"
+		var tagString string
+		if !sf.Embedded {
+			tagString = "`json:\"" + sf.PropertyName
+			if !sf.Required {
+				tagString += ",omitempty"
+			}
+			tagString += "\"`"
 		}
-		tagString += "\"`"
 		buf.WriteString(fmt.Sprintf("%s %s %s\n", sf.Name, sfTypeStr, tagString))
 	}
 	buf.WriteString("}\n")
@@ -400,6 +404,27 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 		jsonType = schemaType
 	}
 
+	hasAllOf := len(s.AllOf) > 0
+	if jsonType == "" && hasAllOf {
+		for index, allOfSchema := range s.AllOf {
+			childPath := fmt.Sprintf("%s/allOf/%d", path, index)
+			gotType := processType(&allOfSchema, fmt.Sprintf("%sEmbedded%d", pName, index), allOfSchema.Description, childPath, path)
+			if gotType == "" {
+				deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
+				return ""
+			}
+			childType := types[gotType]
+			// if any chid is an object, the parent is an object
+			if childType.TypePrefix == "struct" {
+				jsonType = "object"
+			}
+			// if any child is nullable, the parent is nullable
+			if childType.Nullable {
+				gt.Nullable = true
+			}
+		}
+	}
+
 	props := getTypeSchemas(s.Properties)
 	hasProps := len(props) > 0
 	hasAddlProps, addlPropsSchema := parseAdditionalProperties(s.AdditionalProperties)
@@ -410,9 +435,9 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 		if gt.Name == "Properties" {
 			panic(fmt.Errorf("props: %+v\naddlPropsSchema: %+v\n", props, addlPropsSchema))
 		}
-		if hasProps && !hasAddlProps {
+		if (hasProps || hasAllOf) && !hasAddlProps {
 			gt.TypePrefix = typeStruct
-		} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
+		} else if !hasProps && !hasAllOf && hasAddlProps && addlPropsSchema != nil {
 			singularName := singularize(gt.origTypeName)
 			gotType := processType(addlPropsSchema, singularName, s.Description, path+"/additionalProperties", path)
 			if gotType == "" {
@@ -553,6 +578,20 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 				sf.TypePrefix = typeEmptyInterfaceSlice
 			}
 		}
+
+		gt.Fields = append(gt.Fields, sf)
+	}
+
+	for index := range s.AllOf {
+		sf := structField{
+			Embedded: true,
+		}
+
+		childPath := fmt.Sprintf("%s/allOf/%d", path, index)
+		if _, ok := transitiveRefs[childPath]; ok {
+			childPath = transitiveRefs[childPath]
+		}
+		sf.TypeRef = childPath
 
 		gt.Fields = append(gt.Fields, sf)
 	}

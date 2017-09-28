@@ -602,8 +602,8 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 func processDeferred() {
 	for len(deferredTypes) > 0 {
 		startDeferredPaths, _ := stringset.FromMapKeys(deferredTypes)
-		for path, deferred := range deferredTypes {
-			startDeferredPaths.Add(path)
+		for _, path := range startDeferredPaths.Sorted() {
+			deferred := deferredTypes[path]
 			name := processType(deferred.schema, deferred.name, deferred.desc, path, deferred.parentPath)
 			if name != "" {
 				delete(deferredTypes, path)
@@ -629,12 +629,16 @@ func dedupeTypes() {
 
 		newTypesByName := make(stringSetMap)
 
-		for name, dupes := range typesByName {
+		typeNames, _ := stringset.FromMapKeys(typesByName)
+		sortedTypeNames := typeNames.Sorted()
+
+		for _, name := range sortedTypeNames {
+			dupes := typesByName[name]
 			// delete these dupes; will put back in as necessary in subsequent loop
 			typesByName.delete(name)
 
 		dupesLoop:
-			for dupePath := range dupes {
+			for _, dupePath := range dupes.Sorted() {
 				gt := types[dupePath]
 				gt.ambiguityDepth++
 

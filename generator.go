@@ -534,8 +534,13 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 
 		if sf.TypePrefix == typeObject {
 			if hasProps && !hasAddlProps {
+				gotType := processType(propSchema, sf.Name, propSchema.Description, refPath, path)
+				if gotType == "" {
+					deferredTypes[path] = deferredType{schema: s, name: pName, desc: pDesc, parentPath: parentPath}
+					return ""
+				}
 				sf.TypePrefix = ""
-				sf.TypeRef = processType(propSchema, sf.Name, propSchema.Description, refPath, path)
+				sf.TypeRef = gotType
 			} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 				singularName := singularize(propName)
 				gotType := processType(addlPropsSchema, singularName, propSchema.Description, refPath+"/additionalProperties", path)

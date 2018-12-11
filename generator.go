@@ -70,7 +70,10 @@ type goType struct {
 
 func (gt goType) print(buf *bytes.Buffer) {
 	if gt.Comment != "" {
-		buf.WriteString(fmt.Sprintf("// %s\n", gt.Comment))
+		commentLines := strings.Split(gt.Comment, "\n")
+		for _, line := range commentLines {
+			buf.WriteString(fmt.Sprintf("// %s\n", line))
+		}
 	}
 	typeStr := gt.TypePrefix
 	baseType, ok := types[gt.TypeRef]

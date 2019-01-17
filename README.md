@@ -24,6 +24,8 @@ Flags:
       --package="main"       package name for generated file; default is "main"
       --root-type=ROOT-TYPE  name of root type; default is generated from the filename
       --prefix=PREFIX        prefix for non-root types
+      --ptr-for-omit         use a pointer to a struct for an object
+                             property that is represented as a struct if the property is not required (i.e., has omitempty tag)
 
 Args:
   <input>  file containing a valid JSON schema
@@ -40,7 +42,7 @@ Can be used with [`go generate`](https://blog.golang.org/generate):
 Supports the following JSON Schema keywords:
 * `title` - sets type name
 * `description` - sets type comment
-* `required` - sets which fields in type don't have `omitempty`
+* `required` - sets which fields in type don't have `omitempty`. If --ptr-for-omit is specified and the field is not required, a field that is an object represented as a struct is generated as a pointer to the struct.
 * `properties` - determines struct fields
 * `additionalProperties` - determines struct type of map values
 * `type` - sets field type (`string`, `bool`, etc.). Examples:

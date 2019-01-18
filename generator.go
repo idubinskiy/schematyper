@@ -28,6 +28,7 @@ var (
 	packageName     = kingpin.Flag("package", `package name for generated file; default is "main"`).Default("main").String()
 	rootTypeName    = kingpin.Flag("root-type", `name of root type; default is generated from the filename`).String()
 	typeNamesPrefix = kingpin.Flag("prefix", `prefix for non-root types`).String()
+	ptrForOmit      = kingpin.Flag("ptr-for-omit", "use a pointer to a struct for an object property that is represented as a struct if the property is not required (i.e., has omitempty tag)").Default("false").Bool()
 	inputFile       = kingpin.Arg("input", "file containing a valid JSON schema").Required().ExistingFile()
 )
 
@@ -39,6 +40,7 @@ type structField struct {
 	PropertyName string
 	Required     bool
 	Embedded     bool
+	PtrForOmit   bool
 }
 
 type structFields []structField
@@ -101,6 +103,9 @@ func (gt goType) print(buf *bytes.Buffer) {
 		if !sf.Embedded {
 			tagString = "`json:\"" + sf.PropertyName
 			if !sf.Required {
+				if *ptrForOmit && sf.PtrForOmit && !sf.Nullable {
+					sfTypeStr = "*" + sfTypeStr
+				}
 				tagString += ",omitempty"
 			}
 			tagString += "\"`"
@@ -504,6 +509,9 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 		if propSchema.Ref != "" {
 			if refType, ok := types[propSchema.Ref]; ok {
 				sf.TypeRef, sf.Nullable = propSchema.Ref, refType.Nullable
+				if refType.TypePrefix == typeStruct {
+					sf.PtrForOmit = true
+				}
 				gt.Fields = append(gt.Fields, sf)
 				continue
 			}
@@ -544,6 +552,7 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 				}
 				sf.TypePrefix = ""
 				sf.TypeRef = gotType
+				sf.PtrForOmit = true
 			} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 				singularName := singularize(propName)
 				gotType := processType(addlPropsSchema, singularName, propSchema.Description, refPath+"/additionalProperties", path)

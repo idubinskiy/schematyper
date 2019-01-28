@@ -27,6 +27,7 @@ var (
 	outputFile      = kingpin.Flag("out-file", "filename for output; default is <schema>_schematype.go").Short('o').String()
 	packageName     = kingpin.Flag("package", `package name for generated file; default is "main"`).Default("main").String()
 	rootTypeName    = kingpin.Flag("root-type", `name of root type; default is generated from the filename`).String()
+	rootNodeName    = kingpin.Flag("root-node", `name of root node of json; default is whole file`).String()
 	typeNamesPrefix = kingpin.Flag("prefix", `prefix for non-root types`).String()
 	ptrForOmit      = kingpin.Flag("ptr-for-omit", "use a pointer to a struct for an object property that is represented as a struct if the property is not required (i.e., has omitempty tag)").Default("false").Bool()
 	inputFile       = kingpin.Arg("input", "file containing a valid JSON schema").Required().ExistingFile()
@@ -711,8 +712,22 @@ func main() {
 	}
 
 	var s metaSchema
-	if err = json.Unmarshal(file, &s); err != nil {
-		log.Fatalln("Error parsing JSON:", err)
+	if *rootNodeName != "" {
+
+		var sub map[string]metaSchema
+		if err = json.Unmarshal(file, &sub); err != nil {
+			log.Fatalln("Error parsing JSON:", err)
+		}
+		node, ok := sub[*rootNodeName]
+		if ok == false {
+			log.Fatalln(fmt.Sprintf("Error JSON node '%s' does not exists:", *rootNodeName), err)
+		}
+		//log.Panicf("Error reading file %v:", node)
+		s = node
+	} else {
+		if err = json.Unmarshal(file, &s); err != nil {
+			log.Fatalln("Error parsing JSON:", err)
+		}
 	}
 
 	schemaName := strings.Split(filepath.Base(*inputFile), ".")[0]

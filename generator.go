@@ -109,6 +109,8 @@ func (gt goType) print(buf *bytes.Buffer) {
 				tagString += ",omitempty"
 			}
 			tagString += "\"`"
+		} else {
+			tagString = "`json:\",inline\"`"
 		}
 		buf.WriteString(fmt.Sprintf("%s %s %s\n", sf.Name, sfTypeStr, tagString))
 	}

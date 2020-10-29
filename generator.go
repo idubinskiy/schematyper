@@ -553,6 +553,23 @@ func processType(s *metaSchema, pName, pDesc, path, parentPath string) (typeRef 
 				sf.TypePrefix = ""
 				sf.TypeRef = gotType
 				sf.PtrForOmit = true
+			} else if !hasAddlProps {
+				if patternProps := propSchema.PatternProperties; patternProps != nil {
+					var patternPropTypes []string
+					for _, prop := range patternProps {
+						patternPropTypes = append(patternPropTypes, fmt.Sprintf("%v", prop.Type))
+					}
+
+					for index, patternPropType := range patternPropTypes {
+						if index != 0 && patternPropType != patternPropTypes[index-1] {
+							log.Fatalln("can't properly parse this object, it's values should only have 1 type, but found 2:", patternPropType, "and", patternPropTypes[index-1])
+						}
+					}
+
+					if len(patternPropTypes) > 0 {
+						sf.TypePrefix = fmt.Sprintf("map[string]%s", patternPropTypes[0])
+					}
+				}
 			} else if !hasProps && hasAddlProps && addlPropsSchema != nil {
 				singularName := singularize(propName)
 				gotType := processType(addlPropsSchema, singularName, propSchema.Description, refPath+"/additionalProperties", path)
